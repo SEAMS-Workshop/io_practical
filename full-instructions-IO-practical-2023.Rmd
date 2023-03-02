@@ -1,0 +1,434 @@
+---
+title: "Instructor notes to SEAMS IO practical"
+output:
+  pdf_document: default
+  html_document: default
+date: "2023-02-26"
+---
+
+# Preliminaries
+
+These are the instructor notes, not the exercise.  This includes instructions for setting up all the files. 
+
+## Setup 
+
+If you have been playing, clean up first 
+
+```{r}
+rm(list = ls())
+```
+
+Some filenames for input and output
+
+```{r filenames}
+#input resources 
+owidurl <- "https://raw.githubusercontent.com/owid/covid-19-data/master/public/data/owid-covid-data.csv"
+owidfile <- "owid-covid-data.csv"
+countrycodefile <- "country-codes.csv"
+
+# output files for internal use only 
+afdatoldfile <- "afdatold.csv"  # data for African countries, cut off at an arbitrary date
+afdatnewfile <- "afdatnew.csv"  # the newer data, after the cut-off
+vaxdatfile = "african-vax-data.rds"  # just the vaccine columns
+
+# names for the shared resources 
+# note that some of these names have to be hardcoded below when used in SQL commands
+dbfile <- "AfricanCOVID.db"
+uncorruptedscript <- "actually-make-SA-plot.R" 
+script <- "make-SA-plot.R" 
+exercisedir <- "SEAMS_IO_Practical"
+excelfile <- "newer-african-data.xlsx"
+dirfiles <- c(dbfile, excelfile, vaxdatfile, countrycodefile)
+```
+
+## parceling out the OWID data set into 3 parts
+
+Download the > 70 MB OWID data set, and read it into R 
+
+### download OWID data
+
+```{r owid_data}
+# download using owidurl (70 MB file)
+# download.file(owidurl, owidfile, wget, quiet = FALSE, mode = "w")
+owiddat <- read.csv(owidfile, header = T, stringsAsFactors = F)
+```
+
+### Create 3 data sets 
+
+Create the main datasets for the practical, with all-African data through August 2022
+
+```{r main_datasets}
+allafdat <- subset(owiddat, continent == "Africa")
+
+# range(grep("vacc", colnames(allafdat)))
+# vax data are in 35 to 47
+vaxdat <- allafdat[, c(1:4, 35:47)]
+
+# we're going to cut this down to just 16 columns
+allafdat <- allafdat[, 1:16]
+
+# plit by date to create an old dataset that will be updated with the newer dataset
+afdatold <- allafdat[allafdat$date < as.Date("2022-09-01"), ]
+range(afdatold$date)
+write.csv(afdatold, afdatoldfile, row.names = F)
+
+afdatnew <- allafdat[allafdat$date > as.Date("2022-08-31"), ]
+write.csv(afdatnew, afdatnewfile, row.names = F)
+```
+
+
+### Save the 3 data sets in 3 forms 
+
+First, save the new African data in Excel.  Call it `excelfile`. 
+
+Second, save the vaccination data in RDS format 
+```{r RDS_file}
+# assign types 
+vaxdat$date <- as.Date(vaxdat$date)
+vaxdat[, 5:17] <- apply(vaxdat[, 5:17], 2, as.numeric)
+# write out RDS for vaxdat 
+saveRDS(vaxdat, vaxdatfile)
+```
+
+Finally, create an SQL database that has two tables, one called "COVID" to hold all of the old African COVID data, and the other called "ccodes" with ISO and other country codes. This is used only to do a JOIN in which we identify all the southern African countries by combining the ISO3 codes in the COVID table with the "Region" designation of "Southern Africa" in the codes table. 
+
+These are the commands for sqlite3.  
+
+```{sql}
+.header on
+CREATE TABLE "ccodes"("Continent" TEXT, "Region" TEXT, "Country" TEXT, "Capital" TEXT, "FIPS" TEXT, 
+  "ISO2" TEXT, "ISO3" TEXT, "ISOnumber" INTEGER, "Internet" TEXT, "Note" TEXT);
+
+.import --csv --skip 1 "country-codes.csv" ccodes
+
+CREATE TABLE "COVID" (
+ iso_code TEXT,
+ continent TEXT,
+ location TEXT,
+ date TEXT,
+ total_cases INTEGER,
+ new_cases INTEGER,
+ new_cases_smoothed REAL,
+ total_deaths INTEGER,
+ new_deaths INTEGER,
+ new_deaths_smoothed REAL,
+ total_cases_per_million REAL,
+ new_cases_per_million REAL,
+ new_cases_smoothed_per_million REAL,
+ total_deaths_per_million REAL,
+ new_deaths_per_million REAL,
+ new_deaths_smoothed_per_million REAL);
+
+.import --csv --skip 1 "afdatold.csv" COVID
+.save "AfricaCOVID.db"
+```
+
+If you wanted to do all 67 columns in OWID, here is the SQL for that, but we don't need it for this exercise. 
+
+```{sql}
+CREATE TABLE "COVID" (
+ iso_code TEXT,
+ continent TEXT,
+ location TEXT,
+ date TEXT,
+ total_cases INTEGER,
+ new_cases INTEGER,
+ new_cases_smoothed REAL,
+ total_deaths INTEGER,
+ new_deaths INTEGER,
+ new_deaths_smoothed REAL,
+ total_cases_per_million REAL,
+ new_cases_per_million REAL,
+ new_cases_smoothed_per_million REAL,
+ total_deaths_per_million REAL,
+ new_deaths_per_million REAL,
+ new_deaths_smoothed_per_million REAL,
+ reproduction_rate REAL,
+ icu_patients INTEGER,
+ icu_patients_per_million REAL,
+ hosp_patients INTEGER,
+ hosp_patients_per_million REAL,
+ weekly_icu_admissions REAL,
+ weekly_icu_admissions_per_million REAL,
+ weekly_hosp_admissions REAL,
+ weekly_hosp_admissions_per_million REAL,
+ total_tests INTEGER,
+ new_tests INTEGER,
+ total_tests_per_thousand REAL,
+ new_tests_per_thousand REAL,
+ new_tests_smoothed REAL,
+ new_tests_smoothed_per_thousand REAL,
+ positive_rate REAL,
+ tests_per_case REAL,
+ tests_units TEXT,
+ total_vaccinations INTEGER,
+ people_vaccinated INTEGER,
+ people_fully_vaccinated INTEGER,
+ total_boosters INTEGER,
+ new_vaccinations INTEGER,
+ new_vaccinations_smoothed REAL,
+ total_vaccinations_per_hundred REAL,
+ people_vaccinated_per_hundred REAL,
+ people_fully_vaccinated_per_hundred REAL,
+ total_boosters_per_hundred REAL,
+ new_vaccinations_smoothed_per_million REAL,
+ new_people_vaccinated_smoothed REAL,
+ new_people_vaccinated_smoothed_per_hundred REAL,
+ stringency_index REAL,
+ population_density REAL,
+ median_age REAL,
+ aged_65_older REAL,
+ aged_70_older REAL,
+ gdp_per_capita REAL,
+ extreme_poverty REAL,
+ cardiovasc_death_rate REAL,
+ diabetes_prevalence REAL,
+ female_smokers REAL,
+ male_smokers REAL,
+ handwashing_facilities REAL,
+ hospital_beds_per_thousand REAL,
+ life_expectancy REAL,
+ human_development_index REAL,
+ population INTEGER,
+ excess_mortality_cumulative_absolute REAL,
+ excess_mortality_cumulative REAL,
+ excess_mortality REAL,
+ excess_mortality_cumulative_per_million REAL
+);
+```
+
+
+## Test non-broken version of Pat's script
+
+All of this should work.
+
+Howvever, the student copy will have the DB connector messed up so that it doesn't work. This can be done just by changing the name of the library from "RSQLite" to "BadRSQLite". 
+
+```{r Pats_script}
+library("RSQLite") 
+library("ggplot2")
+
+# don't need this anymore bc ISO codes for Region are in ccodes table
+# region <- c("AGO", "BWA", "LSO", "MWI", "MOZ", "NAM", "ZAF", "SWZ", "ZWB", "ZWE")
+
+# get the db link and query it for southern Africa data
+mydblink <- dbConnect(RSQLite::SQLite(), "AfricaCOVID.db")
+regiondat <- dbGetQuery(mydblink, "SELECT COVID.* FROM COVID JOIN ccodes ON COVID.iso_code=ccodes.ISO3 WHERE ccodes.Region='Southern Africa';")
+dbDisconnect(mydblink)
+
+# make the date column into R dates, numeric columns into R numeric type
+regiondat$date <- as.Date(regiondat$date) 
+regiondat[5:16] <- apply(regiondat[5:16], 2, as.numeric)
+zafdat <- subset(regiondat, iso_code = 'ZAF')
+
+# plot the ZAF data with new cases and deaths, save as file 
+p <- ggplot(zafdat, aes(x = date, y = new_cases_smoothed_per_million, group = location)) + 
+  geom_line() + scale_x_date(date_breaks = "1 month", date_labels = "%b") + 
+  ylab(label = "New cases or deaths per million, smoothed") 
+p2 <- p + geom_line(aes(y = new_deaths_smoothed_per_million), colour= "red")
+ggsave("zaf-plot.jpg", p2, width=20, height=8, units="cm")
+
+# plot the data for all southern African countries 
+p3 <- ggplot(regiondat, aes(x = date, y = new_cases_smoothed_per_million, group = location, color = location)) + 
+  geom_line() + scale_x_date(date_breaks = "1 month", date_labels = "%b") + 
+  ylab(label = "New cases per million, smoothed") 
+# ggsave("southern-plot.jpg", p3, width=20, height=8, units="cm")
+```
+
+
+## Make the student version 
+
+I haven't written this out in code yet.  Follow these steps 
+* create a directory with name `exercisedir`
+* copy over the 3 data files (db, RDS, excel)
+* copy over the extra country code file if desired 
+* copy over Pat's script (corrupted version)
+
+## Test the process of putting this all together to solve the problem 
+
+### Access the SQL database and export the SELECT queries as csv 
+
+The command 'sqlite3 `dbfile`' will open the database.  This will get the South Africa data: 
+```{sql}
+.header on
+.mode csv                     
+.once "zaf-data.csv"
+SELECT * FROM COVID WHERE iso_code = "ZAF";
+.mode csv 
+.once "southern-data.csv"
+SELECT COVID.* FROM COVID JOIN ccodes ON COVID.iso_code=ccodes.ISO3 WHERE ccodes.Region='Southern Africa';
+```
+
+
+### read in the csv files exported from the database
+
+Read in the data as text and then cast it as Date or numeric. 
+
+```{r csv_inputs}
+zafdatcsv <- data.frame(read.csv("zaf-data.csv", header = T, stringsAsFactors = F, na.strings = "NA"))
+zafdatcsv$date <- as.Date(zafdatcsv$date)
+zafdatcsv[, 5:16] <- apply(zafdatcsv[, 5:16], 2, as.numeric)
+southerndatcsv <- read.csv("southern-data.csv", header = T, stringsAsFactors = F, na.strings = "NA")
+southerndatcsv$date <- as.Date(southerndatcsv$date)
+southerndatcsv[, 5:16] <- apply(southerndatcsv[, 5:16], 2, as.numeric)
+```
+
+Note that if you SELECT from SQL you just get columns of text interpreted as characters. If you want to apply types in a more automated way, you could do something like this to get a list of the name and SQL type (TEXT, REAL, INTEGER) along with default value for an entire table: 
+
+```{r table_info}
+mydblink <- dbConnect(RSQLite::SQLite(), "AfricaCOVID.db")
+dbGetQuery(mydblink, "PRAGMA table_info('COVID');")
+# should give you 
+#    cid                            name    type notnull dflt_value pk
+# 1    0                        iso_code    TEXT       0         NA  0
+# 2    1                       continent    TEXT       0         NA  0
+# 3    2                        location    TEXT       0         NA  0
+# 4    3                            date    TEXT       0         NA  0
+# 5    4                     total_cases INTEGER       0         NA  0
+# 6    5                       new_cases INTEGER       0         NA  0
+# 7    6              new_cases_smoothed    REAL       0         NA  0 
+# ...
+dbDisconnect(mydblink)
+```
+
+### read in the ancillary files 
+
+Either (1) read the Excel directly
+```{r excel}
+library(readxl)
+updatex <- read_excel(excelfile)
+range(updatex$date)
+```
+
+or save it as csv in Excel and read that.  But it won't work unless your Excel settings ensure that the the text output in CSV mode will be YYYY-MM-DD. 
+
+```{r update_input}
+update <- data.frame(read.csv("newer-african-data.csv", header = T, stringsAsFactors = F))
+range(update$date)
+
+# saved CSV from version of Excel where the location = South Africa so that the dates come out right
+update <- data.frame(read.csv("newer-african-data-sax.csv", header = T, stringsAsFactors = F))
+range(update$date)
+
+```
+
+Read in the vaccination data. 
+```{r vaxdat}
+vaxdat <- readRDS(vaxdatfile)
+```
+
+### Make the South Africa plot
+
+First we will define a plotting function
+```{r dualplot}
+makedualplot <- function(thedata) { 
+  p <- ggplot(thedata, aes(x = date, y = new_cases_smoothed_per_million, group = location)) + 
+  geom_line() + scale_x_date(date_breaks = "1 month", date_labels = "%b") + 
+  ylab(label = "New cases per million (smoothed)") 
+  p + geom_line(aes(y = new_deaths_smoothed_per_million), color= "red")
+}
+```
+
+Now we apply that to our data from the csv file (output from the db)
+```{r zafplot}
+p1 <- makedualplot(zafdatcsv)
+p1
+```
+
+### Make the extended South Africa plot 
+
+We knit old and new with a simple rbind and this will work easily if you solved the date problem. 
+
+```{r zafplot_update}
+updatex$date <- as.Date(updatex$date)
+updatex[5:16] <- apply(updatex[5:16], 2, as.numeric)
+
+# newzafdat <- rbind(zafdatcsv, update[update$iso_code == "ZAF", ])
+newzafdat <- rbind(zafdatcsv, updatex[updatex$iso_code == "ZAF", ])
+p2 <- makedualplot(newzafdat)
+```
+
+### Make the southern Africa plot 
+
+Define the plotting command
+```{r countryplot}
+multicountryplot <- function(thedata) { 
+  ggplot(thedata, aes(x = date, y = as.numeric(new_cases_smoothed_per_million), group = location, color = location)) + 
+  geom_line() + scale_x_date(date_breaks = "1 month", date_labels = "%b") + 
+  ylab(label = "New cases per million, smoothed)")
+}
+```
+
+Try to remake the original plot that Pat's script computed but did not show or save. 
+
+```{r countryplot_remake}
+p3 <- multicountryplot(southerndatcsv)
+p3
+```
+
+Make the new plot.  You can get the southern African country codes from the DB, from country-codes.csv, or just look it up.
+
+```{r countrplot_update}
+newsoutherndat <- rbind(southerndatcsv, updatex)
+newsoutherndat$date <- as.Date(newsoutherndat$date)
+multicountryplot(newsoutherndat)
+
+# you can get this from the DB, country-codes.csv, or just look it up
+southcodes <- c("AGO", "BWA", "LSO", "MWI", "MOZ", "NAM", "ZAF", "SWZ", "ZWB", "ZWE")
+newsoutherndat <- subset(newsoutherndat, iso_code %in% southcodes)
+multicountryplot(newsoutherndat)
+
+```
+
+### the vaccine data
+
+```{r vaxplot}
+
+svaxdat <- subset(vaxdat, iso_code %in% southcodes)
+
+ggplot(svaxdat, aes(x = date, y = people_vaccinated_per_hundred, group = location, color = location)) + 
+  geom_line() + scale_x_date(date_breaks = "2 months", date_labels = "%b") + 
+  ylab(label = "People vaccinated per hundred")
+
+
+```
+
+## Python 
+
+This is how the data can be exported and imported in Python, assuming that you have selected the data and stored it in my_data.  
+
+```{python}
+import pickle
+pickle.dump(my_data, open("my_data.p", "wb"))
+rm(my_data)
+
+my_data <- pickle.load(open("my_data.p", "rb"))
+```
+
+I did not work out a complete Python version of Pat's script, due to my lack of Python skills. This does most of it
+
+```{python}
+# import libraries 
+import sqlite3 # badsqlite in the student version
+import pandas as pd
+
+# setup db connection
+dbpath = os.path.abspath("/Users/arlin/Dropbox/SEAMS/2023/clean-practical/AfricaCOVID.db")
+con = sqlite3.connect(dbpath)
+cur = con.cursor()
+
+# get all the southern africa data 
+result = cur.execute("SELECT COVID.* FROM COVID JOIN ccodes ON COVID.iso_code=ccodes.ISO3 WHERE ccodes.Region='Southern Africa'")
+regiondat = pd.DataFrame(result.fetchall())
+
+# name the columns
+regiondat.columns = ["iso_code", "continent", "location", "date", "total_cases", "new_cases", "new_cases_smoothed", "total_deaths", "new_deaths", "new_deaths_smoothed", "total_cases_per_million", "new_cases_per_million", "new_cases_smoothed_per_million", "total_deaths_per_million", "new_deaths_per_million", "new_deaths_smoothed_per_million"]
+regiondat.head(10)
+
+# this part doesn't work but it's close
+# plot results 
+regiondat.set_index('date', inplace=True)
+regiondat.groupby('location')['new_cases_smoothed_per_million'].plot(legend=True)
+
+```
+
